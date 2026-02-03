@@ -98,12 +98,18 @@ const YT_DLP_COMMON_ARGS = `--ffmpeg-location "${FFMPEG_DIR}" --no-playlist --no
 
 // Download using yt-dlp (YouTube, Twitter/X) with format fallback
 async function downloadWithYtDlp(url: string, outputTemplate: string): Promise<{ stdout: string; stderr: string }> {
+  // Use cookies file if available (helps bypass YouTube bot detection)
+  let cookiesArg = '';
+  if (existsSync(COOKIES_FILE)) {
+    cookiesArg = `--cookies "${COOKIES_FILE}"`;
+  }
+
   // Try best video+audio first, fallback to best single format
   const formats = ['-f "bv*+ba/b" --merge-output-format mp4', '-f "b" --merge-output-format mp4'];
 
   let lastError: unknown;
   for (const fmt of formats) {
-    const command = `"${YT_DLP_PATH}" ${YT_DLP_COMMON_ARGS} ${fmt} -o "${outputTemplate}" "${url}"`;
+    const command = `"${YT_DLP_PATH}" ${YT_DLP_COMMON_ARGS} ${cookiesArg} ${fmt} -o "${outputTemplate}" "${url}"`;
     console.log('Executing yt-dlp:', command);
     try {
       return await execAsync(command, {
