@@ -104,16 +104,17 @@ async function downloadWithYtDlp(url: string, outputTemplate: string): Promise<{
     cookiesArg = `--cookies "${COOKIES_FILE}"`;
   }
 
-  // For YouTube, use android player client to bypass bot detection
-  const isYouTube = url.includes('youtube.com') || url.includes('youtu.be');
-  const extractorArgs = isYouTube ? '--extractor-args "youtube:player_client=android,web"' : '';
-
-  // Try best video+audio first, fallback to best single format
-  const formats = ['-f "bv*+ba/b" --merge-output-format mp4', '-f "b" --merge-output-format mp4', '-f "best"'];
+  // Let yt-dlp use its default client fallback (ANDROID_VR works best without explicit config)
+  // Try multiple format options for best compatibility
+  const formatOptions = [
+    '', // Let yt-dlp choose best format automatically
+    '-f "bv*+ba/b" --merge-output-format mp4',
+    '-f "b" --merge-output-format mp4',
+  ];
 
   let lastError: unknown;
-  for (const fmt of formats) {
-    const command = `"${YT_DLP_PATH}" ${YT_DLP_COMMON_ARGS} ${cookiesArg} ${extractorArgs} ${fmt} -o "${outputTemplate}" "${url}"`;
+  for (const fmt of formatOptions) {
+    const command = `"${YT_DLP_PATH}" ${YT_DLP_COMMON_ARGS} ${cookiesArg} ${fmt} -o "${outputTemplate}" "${url}"`.replace(/\s+/g, ' ').trim();
     console.log('Executing yt-dlp:', command);
     try {
       return await execAsync(command, {
@@ -122,7 +123,7 @@ async function downloadWithYtDlp(url: string, outputTemplate: string): Promise<{
       });
     } catch (error) {
       lastError = error;
-      console.log(`[yt-dlp] Format "${fmt}" failed, trying next...`);
+      console.log(`[yt-dlp] Format "${fmt || 'auto'}" failed, trying next...`);
     }
   }
   throw lastError;
