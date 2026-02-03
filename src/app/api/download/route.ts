@@ -104,12 +104,16 @@ async function downloadWithYtDlp(url: string, outputTemplate: string): Promise<{
     cookiesArg = `--cookies "${COOKIES_FILE}"`;
   }
 
+  // For YouTube, use android player client to bypass bot detection
+  const isYouTube = url.includes('youtube.com') || url.includes('youtu.be');
+  const extractorArgs = isYouTube ? '--extractor-args "youtube:player_client=android,web"' : '';
+
   // Try best video+audio first, fallback to best single format
-  const formats = ['-f "bv*+ba/b" --merge-output-format mp4', '-f "b" --merge-output-format mp4'];
+  const formats = ['-f "bv*+ba/b" --merge-output-format mp4', '-f "b" --merge-output-format mp4', '-f "best"'];
 
   let lastError: unknown;
   for (const fmt of formats) {
-    const command = `"${YT_DLP_PATH}" ${YT_DLP_COMMON_ARGS} ${cookiesArg} ${fmt} -o "${outputTemplate}" "${url}"`;
+    const command = `"${YT_DLP_PATH}" ${YT_DLP_COMMON_ARGS} ${cookiesArg} ${extractorArgs} ${fmt} -o "${outputTemplate}" "${url}"`;
     console.log('Executing yt-dlp:', command);
     try {
       return await execAsync(command, {
