@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-venv \
     curl \
+    unzip \
     ca-certificates \
     fonts-liberation \
     libnss3 \
@@ -26,6 +27,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install yt-dlp and instaloader
 RUN python3 -m pip install --break-system-packages yt-dlp instaloader
+
+# Install Deno for yt-dlp JS challenges
+RUN curl -fsSL https://deno.land/install.sh | sh
+ENV DENO_INSTALL="/root/.deno"
+ENV PATH="${DENO_INSTALL}/bin:${PATH}"
 
 # Set Puppeteer to use system Chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true

@@ -13,6 +13,7 @@ services:
     volumes:
       - downloads:/app/downloads
       - ./settings.json:/app/settings.json:ro
+      - ./cookies.txt:/app/cookies.txt:ro
     restart: unless-stopped
     shm_size: '1gb'
 

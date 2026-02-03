@@ -93,8 +93,8 @@ function cleanOldFiles() {
   }
 }
 
-// Common yt-dlp arguments
-const YT_DLP_COMMON_ARGS = `--ffmpeg-location "${FFMPEG_DIR}" --no-playlist --no-warnings --no-check-certificates --windows-filenames`;
+// Common yt-dlp arguments (includes remote-components for YouTube JS challenges)
+const YT_DLP_COMMON_ARGS = `--ffmpeg-location "${FFMPEG_DIR}" --no-playlist --no-warnings --no-check-certificates --windows-filenames --remote-components ejs:github`;
 
 // Download using yt-dlp (YouTube, Twitter/X) with format fallback
 async function downloadWithYtDlp(url: string, outputTemplate: string): Promise<{ stdout: string; stderr: string }> {
