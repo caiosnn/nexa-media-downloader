@@ -13,7 +13,7 @@ import { cacheDownloadResult, getCachedDownloadResult } from '@/lib/cache';
 const execAsync = promisify(exec);
 
 export const runtime = 'nodejs';
-export const maxDuration = 120; // 2 minutes timeout
+export const maxDuration = 180; // 3 minutes timeout (extra time for MP4 conversion)
 
 // Directory for downloads
 const DOWNLOADS_DIR = path.join(process.cwd(), 'downloads');
@@ -97,6 +97,7 @@ function cleanOldFiles() {
 const YT_DLP_COMMON_ARGS = `--ffmpeg-location "${FFMPEG_DIR}" --no-playlist --no-warnings --no-check-certificates --windows-filenames --remote-components ejs:github`;
 
 // Download using yt-dlp (YouTube, Twitter/X) with format fallback
+// Always outputs MP4, converting if necessary
 async function downloadWithYtDlp(url: string, outputTemplate: string): Promise<{ stdout: string; stderr: string }> {
   // Use cookies file if available (helps bypass YouTube bot detection)
   let cookiesArg = '';
@@ -104,26 +105,30 @@ async function downloadWithYtDlp(url: string, outputTemplate: string): Promise<{
     cookiesArg = `--cookies "${COOKIES_FILE}"`;
   }
 
-  // Let yt-dlp use its default client fallback (ANDROID_VR works best without explicit config)
-  // Try multiple format options for best compatibility
+  // Force MP4 output template (replace extension placeholder with mp4)
+  const mp4Template = outputTemplate.replace('%(ext)s', 'mp4');
+
+  // Format options - all force MP4 output with conversion if needed
+  // --recode-video mp4: converts to MP4 if source is different format (webm, mkv, etc)
+  // --merge-output-format mp4: ensures merged output is MP4
   const formatOptions = [
-    '', // Let yt-dlp choose best format automatically
-    '-f "bv*+ba/b" --merge-output-format mp4',
-    '-f "b" --merge-output-format mp4',
+    '-f "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b" --merge-output-format mp4',
+    '-f "bv*+ba/b" --merge-output-format mp4 --recode-video mp4',
+    '-f "b" --recode-video mp4',
   ];
 
   let lastError: unknown;
   for (const fmt of formatOptions) {
-    const command = `"${YT_DLP_PATH}" ${YT_DLP_COMMON_ARGS} ${cookiesArg} ${fmt} -o "${outputTemplate}" "${url}"`.replace(/\s+/g, ' ').trim();
+    const command = `"${YT_DLP_PATH}" ${YT_DLP_COMMON_ARGS} ${cookiesArg} ${fmt} -o "${mp4Template}" "${url}"`.replace(/\s+/g, ' ').trim();
     console.log('Executing yt-dlp:', command);
     try {
       return await execAsync(command, {
-        timeout: 110000,
+        timeout: 180000, // 3 minutes for conversion
         maxBuffer: 10 * 1024 * 1024,
       });
     } catch (error) {
       lastError = error;
-      console.log(`[yt-dlp] Format "${fmt || 'auto'}" failed, trying next...`);
+      console.log(`[yt-dlp] Format "${fmt}" failed, trying next...`);
     }
   }
   throw lastError;
