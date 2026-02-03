@@ -1,0 +1,20 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+      - YT_DLP_PATH=yt-dlp
+      - INSTALOADER_PATH=instaloader
+      - FFMPEG_DIR=/usr/bin
+    volumes:
+      - downloads:/app/downloads
+      - ./settings.json:/app/settings.json:ro
+    restart: unless-stopped
+    shm_size: '1gb'
+
+volumes:
+  downloads:

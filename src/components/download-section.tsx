@@ -1,14 +1,30 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Link, Download, Loader2, Check, X, ArrowRight, Zap } from 'lucide-react';
+import { Link, Download, Loader2, Check, X, ArrowRight, Zap, Play, Image as ImageIcon, Clock, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { PlatformIcon } from '@/components/platform-icon';
 import { CaptchaDialog } from '@/components/captcha-dialog';
-import { detectPlatform, getPlatformName, isValidUrl } from '@/lib/platform-detector';
-import { DownloadProgress, DownloadHistoryItem } from '@/types';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { detectPlatform, getPlatformName, isValidUrl, extractUsernameFromUrl } from '@/lib/platform-detector';
+import { DownloadProgress, DownloadHistoryItem, Story } from '@/types';
+import { toast } from 'sonner';
+import { formatDistanceToNow } from '@/lib/utils';
+
+interface ProfileUserInfo {
+  id: string;
+  username: string;
+  displayName: string;
+  profilePicUrl: string;
+  isPrivate: boolean;
+}
+
+interface ProfileResult {
+  user: ProfileUserInfo;
+  stories: Story[];
+}
 
 interface DownloadSectionProps {
   onDownloadComplete?: (item: DownloadHistoryItem) => void;
@@ -23,6 +39,10 @@ export function DownloadSection({ onDownloadComplete }: DownloadSectionProps) {
   });
   const [showCaptcha, setShowCaptcha] = useState(false);
   const [pendingCaptcha, setPendingCaptcha] = useState<{ token: string; answer: string } | null>(null);
+  const [profileResult, setProfileResult] = useState<ProfileResult | null>(null);
+  const [downloadingStoryId, setDownloadingStoryId] = useState<string | null>(null);
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false);
+  const [isRefreshingStories, setIsRefreshingStories] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -72,6 +92,48 @@ export function DownloadSection({ onDownloadComplete }: DownloadSectionProps) {
         progress: 0,
         message: 'Plataforma nao suportada. Use links do YouTube, Instagram ou X.',
       });
+      return;
+    }
+
+    // Handle Instagram profile URLs — fetch stories instead of downloading
+    if (detection.contentType === 'profile') {
+      const username = extractUsernameFromUrl(url);
+      if (!username) {
+        setDownloadState({ status: 'error', progress: 0, message: 'Nao foi possivel extrair o username do link.' });
+        return;
+      }
+
+      setDownloadState({
+        status: 'downloading',
+        progress: 30,
+        message: `Buscando stories de @${username}...`,
+        platform: 'instagram',
+        contentType: 'profile',
+      });
+
+      try {
+        const res = await fetch(`/api/instagram/stories?username=${encodeURIComponent(username)}`);
+        const data = await res.json();
+
+        if (!data.success) {
+          setDownloadState({ status: 'error', progress: 0, message: data.error || 'Erro ao buscar stories' });
+          return;
+        }
+
+        setProfileResult({ user: data.user, stories: data.stories || [] });
+
+        setDownloadState({
+          status: 'completed',
+          progress: 100,
+          message: data.stories?.length
+            ? `${data.stories.length} stories encontrados!`
+            : 'Nenhum story ativo no momento',
+          platform: 'instagram',
+          contentType: 'profile',
+        });
+      } catch {
+        setDownloadState({ status: 'error', progress: 0, message: 'Erro de conexao. Tente novamente.' });
+      }
       return;
     }
 
@@ -220,6 +282,103 @@ export function DownloadSection({ onDownloadComplete }: DownloadSectionProps) {
       message: '',
     });
     setPendingCaptcha(null);
+    setProfileResult(null);
+  };
+
+  const handleDownloadStory = async (story: Story) => {
+    if (!profileResult) return;
+    setDownloadingStoryId(story.id);
+    try {
+      const res = await fetch('/api/instagram/stories/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: profileResult.user.username, storyId: story.id }),
+      });
+      const data = await res.json();
+      if (data.success && data.downloadUrl) {
+        const link = document.createElement('a');
+        link.href = data.downloadUrl;
+        link.download = data.fileName || 'story.mp4';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        toast.success('Story baixado!');
+
+        if (onDownloadComplete) {
+          onDownloadComplete({
+            id: Date.now().toString(),
+            url: story.mediaUrl,
+            platform: 'instagram',
+            contentType: 'story',
+            fileName: data.fileName,
+            fileSize: data.fileSize || 0,
+            downloadedAt: new Date().toISOString(),
+            thumbnailUrl: story.thumbnailUrl,
+          });
+        }
+      } else {
+        toast.error(data.error || 'Erro ao baixar story');
+      }
+    } catch {
+      toast.error('Erro ao baixar story');
+    }
+    setDownloadingStoryId(null);
+  };
+
+  const handleDownloadAllStories = async () => {
+    if (!profileResult?.stories.length) return;
+    setIsDownloadingAll(true);
+    let downloaded = 0;
+
+    for (const story of profileResult.stories) {
+      try {
+        const res = await fetch('/api/instagram/stories/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: profileResult.user.username, storyId: story.id }),
+        });
+        const data = await res.json();
+        if (data.success && data.downloadUrl) {
+          const link = document.createElement('a');
+          link.href = data.downloadUrl;
+          link.download = data.fileName || 'story.mp4';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          downloaded++;
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      } catch {
+        console.error('Failed to download story');
+      }
+    }
+
+    toast.success(`${downloaded} stories baixados`);
+    setIsDownloadingAll(false);
+  };
+
+  const handleRefreshStories = async () => {
+    if (!profileResult) return;
+    setIsRefreshingStories(true);
+    try {
+      const res = await fetch(
+        `/api/instagram/stories?username=${encodeURIComponent(profileResult.user.username)}&refresh=true`
+      );
+      const data = await res.json();
+      if (data.success) {
+        setProfileResult({ user: data.user || profileResult.user, stories: data.stories || [] });
+        toast.success(
+          data.stories?.length
+            ? `${data.stories.length} stories atualizados`
+            : 'Nenhum story ativo'
+        );
+      } else {
+        toast.error(data.error || 'Erro ao atualizar');
+      }
+    } catch {
+      toast.error('Erro ao atualizar stories');
+    }
+    setIsRefreshingStories(false);
   };
 
   const isProcessing = downloadState.status === 'detecting' || downloadState.status === 'downloading';
@@ -352,8 +511,8 @@ export function DownloadSection({ onDownloadComplete }: DownloadSectionProps) {
                   </div>
                 )}
 
-                {/* Success Actions */}
-                {downloadState.status === 'completed' && (
+                {/* Success Actions (non-profile downloads only) */}
+                {downloadState.status === 'completed' && !profileResult && (
                   <div className="flex items-center gap-3 pt-2">
                     <Button
                       onClick={handleSaveFile}
@@ -382,6 +541,171 @@ export function DownloadSection({ onDownloadComplete }: DownloadSectionProps) {
                     >
                       Tentar novamente
                     </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Profile Stories Preview */}
+            {profileResult && (
+              <div className="mt-6 rounded-xl bg-background/50 border border-border/50 p-5 space-y-5">
+                {/* Profile Header */}
+                <div className="flex items-center gap-4">
+                  <div className="relative">
+                    {profileResult.stories.length > 0 && (
+                      <div className="absolute -inset-1 rounded-full gradient-primary opacity-80" />
+                    )}
+                    <Avatar className="relative h-16 w-16 border-2 border-background">
+                      <AvatarImage
+                        src={profileResult.user.profilePicUrl}
+                        alt={profileResult.user.displayName}
+                      />
+                      <AvatarFallback className="bg-muted text-muted-foreground font-medium text-xl">
+                        {profileResult.user.username.slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-xl text-foreground truncate">
+                      @{profileResult.user.username}
+                    </p>
+                    <p className="text-sm text-muted-foreground truncate">
+                      {profileResult.user.displayName}
+                      {profileResult.stories.length > 0 && (
+                        <span className="ml-2 text-primary font-medium">
+                          &middot; {profileResult.stories.length} {profileResult.stories.length === 1 ? 'story' : 'stories'}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex gap-2 flex-shrink-0">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={handleRefreshStories}
+                      disabled={isRefreshingStories || isDownloadingAll}
+                      className="glass-subtle border-white/10 hover:bg-white/5 h-10 w-10"
+                      title="Atualizar stories"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${isRefreshingStories ? 'animate-spin' : ''}`} />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={resetState}
+                      className="glass-subtle border-white/10 hover:bg-white/5"
+                    >
+                      Buscar outro
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Stories Grid */}
+                {profileResult.stories.length > 0 ? (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                      {profileResult.stories.map((story) => (
+                        <button
+                          key={story.id}
+                          onClick={() => handleDownloadStory(story)}
+                          disabled={downloadingStoryId === story.id || isDownloadingAll}
+                          className="relative aspect-[9/16] rounded-xl overflow-hidden border border-border/50 hover:border-primary/50 hover:scale-[1.02] transition-all group/story bg-muted/30"
+                        >
+                          {/* Thumbnail */}
+                          {story.thumbnailUrl ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img
+                              src={story.thumbnailUrl}
+                              alt="Story"
+                              className="absolute inset-0 w-full h-full object-cover"
+                              loading="lazy"
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                target.style.display = 'none';
+                                const fallback = target.nextElementSibling as HTMLElement;
+                                if (fallback) fallback.style.display = 'flex';
+                              }}
+                            />
+                          ) : null}
+                          {/* Fallback placeholder (shown if no thumbnail or on error) */}
+                          <div
+                            className="absolute inset-0 bg-gradient-to-br from-primary/20 via-muted/40 to-primary/10 items-center justify-center"
+                            style={{ display: story.thumbnailUrl ? 'none' : 'flex' }}
+                          >
+                            {story.mediaType === 'video' ? (
+                              <Play className="h-10 w-10 text-white/40" />
+                            ) : (
+                              <ImageIcon className="h-10 w-10 text-white/40" />
+                            )}
+                          </div>
+
+                          {/* Hover overlay */}
+                          <div className="absolute inset-0 bg-black/0 group-hover/story:bg-black/40 transition-all flex items-center justify-center">
+                            <div className="opacity-0 group-hover/story:opacity-100 transition-opacity flex flex-col items-center gap-1.5">
+                              {downloadingStoryId === story.id ? (
+                                <Loader2 className="h-8 w-8 text-white animate-spin" />
+                              ) : (
+                                <>
+                                  <Download className="h-8 w-8 text-white" />
+                                  <span className="text-xs text-white/90 font-medium">Baixar</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Media Type Badge */}
+                          <div className="absolute bottom-2 right-2 px-2 py-1 rounded-md bg-black/60 flex items-center gap-1">
+                            {story.mediaType === 'video' ? (
+                              <Play className="h-3 w-3 text-white fill-white" />
+                            ) : (
+                              <ImageIcon className="h-3 w-3 text-white" />
+                            )}
+                            <span className="text-[10px] text-white font-medium uppercase">
+                              {story.mediaType === 'video' ? 'Video' : 'Foto'}
+                            </span>
+                          </div>
+
+                          {/* Time Badge */}
+                          <div className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-md bg-black/60">
+                            <Clock className="h-3 w-3 text-white/80" />
+                            <span className="text-[11px] text-white/90">
+                              {formatDistanceToNow(story.postedAt)}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Download All */}
+                    <Button
+                      onClick={handleDownloadAllStories}
+                      disabled={isDownloadingAll}
+                      size="lg"
+                      className="w-full gradient-primary hover:opacity-90 gap-2 shadow-glow-sm transition-all text-base"
+                    >
+                      {isDownloadingAll ? (
+                        <>
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                          Baixando stories...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="h-5 w-5" />
+                          Baixar todos ({profileResult.stories.length} stories)
+                        </>
+                      )}
+                    </Button>
+
+                  </>
+                ) : (
+                  <div className="py-8 text-center">
+                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-muted/50 mb-3">
+                      <ImageIcon className="h-8 w-8 text-muted-foreground/50" />
+                    </div>
+                    <p className="text-muted-foreground text-lg">
+                      {profileResult.user.isPrivate
+                        ? 'Perfil privado - nao e possivel ver stories'
+                        : 'Nenhum story ativo no momento'}
+                    </p>
                   </div>
                 )}
               </div>

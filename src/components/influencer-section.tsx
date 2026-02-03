@@ -34,9 +34,13 @@ export function InfluencerSection({
 
   const handleAdd = async (username: string) => {
     setIsAdding(true);
-    await onAddInfluencer(username);
+    try {
+      await onAddInfluencer(username);
+      setIsAddDialogOpen(false);
+    } catch {
+      // Error is handled by the dialog
+    }
     setIsAdding(false);
-    setIsAddDialogOpen(false);
   };
 
   const totalStories = influencers.reduce((acc, inf) => acc + inf.stories.length, 0);
@@ -78,7 +82,7 @@ export function InfluencerSection({
             <Button
               variant="outline"
               onClick={handleRefresh}
-              disabled={isRefreshing || !instagramConnected}
+              disabled={isRefreshing}
               className="gap-2 glass-subtle border-white/10 hover:bg-white/5 transition-all"
             >
               <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />

@@ -45,8 +45,13 @@ export function AddInfluencerDialog({
     }
 
     setError('');
-    await onAdd(cleanUsername);
-    setUsername('');
+    try {
+      await onAdd(cleanUsername);
+      setUsername('');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Erro ao buscar perfil';
+      setError(message);
+    }
   };
 
   const handleOpenChange = (newOpen: boolean) => {

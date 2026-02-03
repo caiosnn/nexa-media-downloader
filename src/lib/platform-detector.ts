@@ -62,7 +62,7 @@ export function detectPlatform(url: string): DetectionResult {
       // Check if it's a profile URL (single path segment that's not reserved)
       if (pathname && !pathname.includes('/') && !INSTAGRAM_RESERVED_PATHS.includes(pathname.toLowerCase())) {
         // It's a profile URL like instagram.com/username
-        return { platform: 'instagram', contentType: 'post', isValid: true };
+        return { platform: 'instagram', contentType: 'profile', isValid: true };
       }
     } catch {
       // Invalid URL, continue to other checks
@@ -94,8 +94,23 @@ export function getContentTypeName(contentType: ContentType): string {
     story: 'Story',
     post: 'Post',
     short: 'Short',
+    profile: 'Perfil',
   };
   return names[contentType];
+}
+
+export function extractUsernameFromUrl(url: string): string | null {
+  try {
+    const urlObj = new URL(url.trim());
+    if (!urlObj.hostname.includes('instagram.com')) return null;
+    const pathname = urlObj.pathname.replace(/^\/+|\/+$/g, '');
+    if (pathname && !pathname.includes('/') && !INSTAGRAM_RESERVED_PATHS.includes(pathname.toLowerCase())) {
+      return pathname;
+    }
+  } catch {
+    // Invalid URL
+  }
+  return null;
 }
 
 export function getPlatformColor(platform: Platform): string {

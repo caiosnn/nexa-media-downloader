@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Header } from '@/components/header';
 import { DownloadSection } from '@/components/download-section';
+import { StorySearchSection } from '@/components/story-search-section';
 import { InfluencerSection } from '@/components/influencer-section';
 import { HistorySection } from '@/components/history-section';
-import { InstagramStatus, InfluencerWithStories, DownloadHistoryItem } from '@/types';
+import { InstagramStatus, InfluencerWithStories, DownloadHistoryItem, Story } from '@/types';
 
 export default function HomePage() {
   const [instagramStatus, setInstagramStatus] = useState<InstagramStatus>({
@@ -50,16 +52,26 @@ export default function HomePage() {
   };
 
   const handleAddInfluencer = async (username: string) => {
-    // TODO: Implement actual API call
+    const res = await fetch(`/api/instagram/stories?username=${encodeURIComponent(username)}`);
+    const data = await res.json();
+
+    if (!data.success) {
+      toast.error(data.error || 'Erro ao buscar perfil');
+      throw new Error(data.error);
+    }
+
     const newInfluencer: InfluencerWithStories = {
-      id: Date.now().toString(),
-      username,
-      displayName: username,
-      profilePicUrl: `https://picsum.photos/seed/${username}/100/100`,
-      isPrivate: false,
+      id: data.user?.id || Date.now().toString(),
+      username: data.user?.username || username,
+      displayName: data.user?.displayName || username,
+      profilePicUrl: data.user?.profilePicUrl || '',
+      isPrivate: data.user?.isPrivate || false,
       createdAt: new Date().toISOString(),
-      stories: [],
-      hasNewStories: false,
+      stories: (data.stories || []).map((s: Story & { influencerId?: string }) => ({
+        ...s,
+        influencerId: data.user?.id || username,
+      })),
+      hasNewStories: (data.stories?.length || 0) > 0,
     };
     setInfluencers((prev) => [...prev, newInfluencer]);
   };
@@ -69,8 +81,51 @@ export default function HomePage() {
   };
 
   const handleRefreshStories = async () => {
-    // TODO: Implement actual API call
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const updated = await Promise.all(
+      influencers.map(async (inf) => {
+        try {
+          const res = await fetch(`/api/instagram/stories?username=${encodeURIComponent(inf.username)}`);
+          const data = await res.json();
+          if (data.success && data.stories) {
+            return {
+              ...inf,
+              stories: data.stories.map((s: Story & { influencerId?: string }) => ({
+                ...s,
+                influencerId: inf.id,
+              })),
+              hasNewStories: data.stories.length > 0,
+            };
+          }
+        } catch (e) {
+          console.error(`Failed to refresh stories for @${inf.username}`, e);
+        }
+        return inf;
+      })
+    );
+    setInfluencers(updated);
+  };
+
+  const handleAddToWatchlist = (username: string, prefetchedData?: { user: { id: string; username: string; displayName: string; profilePicUrl: string; isPrivate: boolean }; stories: Story[] }) => {
+    if (influencers.some((i) => i.username === username)) {
+      toast.error('Perfil ja esta na lista');
+      return;
+    }
+    if (prefetchedData) {
+      const newInfluencer: InfluencerWithStories = {
+        id: prefetchedData.user.id,
+        username: prefetchedData.user.username,
+        displayName: prefetchedData.user.displayName,
+        profilePicUrl: prefetchedData.user.profilePicUrl,
+        isPrivate: prefetchedData.user.isPrivate,
+        createdAt: new Date().toISOString(),
+        stories: prefetchedData.stories.map((s) => ({ ...s, influencerId: prefetchedData.user.id })),
+        hasNewStories: prefetchedData.stories.length > 0,
+      };
+      setInfluencers((prev) => [...prev, newInfluencer]);
+      toast.success(`@${username} adicionado ao monitor`);
+    } else {
+      handleAddInfluencer(username);
+    }
   };
 
   const handleDownloadComplete = (item: DownloadHistoryItem) => {
@@ -90,6 +145,14 @@ export default function HomePage() {
         {/* Hero Download Section */}
         <div className="mb-16">
           <DownloadSection onDownloadComplete={handleDownloadComplete} />
+        </div>
+
+        {/* Story Search */}
+        <div className="mb-16">
+          <StorySearchSection
+            onAddToWatchlist={handleAddToWatchlist}
+            onDownloadComplete={handleDownloadComplete}
+          />
         </div>
 
         {/* Content Grid */}

@@ -25,12 +25,10 @@ if (!existsSync(DOWNLOADS_DIR)) {
   mkdirSync(DOWNLOADS_DIR, { recursive: true });
 }
 
-// Tool paths (installed via pip)
-const YT_DLP_PATH = 'C:\\Users\\User\\AppData\\Local\\Programs\\Python\\Python314\\Scripts\\yt-dlp.exe';
-const INSTALOADER_PATH = 'C:\\Users\\User\\AppData\\Roaming\\Python\\Python314\\Scripts\\instaloader.exe';
-
-// ffmpeg path (installed via winget)
-const FFMPEG_DIR = 'C:\\Users\\User\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin';
+// Tool paths - configurable via env vars for Docker/Linux, with Windows fallbacks
+const YT_DLP_PATH = process.env.YT_DLP_PATH || 'C:\\Users\\User\\AppData\\Local\\Programs\\Python\\Python314\\Scripts\\yt-dlp.exe';
+const INSTALOADER_PATH = process.env.INSTALOADER_PATH || 'C:\\Users\\User\\AppData\\Roaming\\Python\\Python314\\Scripts\\instaloader.exe';
+const FFMPEG_DIR = process.env.FFMPEG_DIR || 'C:\\Users\\User\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin';
 
 interface DownloadRequest {
   url: string;

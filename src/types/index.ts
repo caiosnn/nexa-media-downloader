@@ -1,7 +1,7 @@
 // Platform types
 export type Platform = 'youtube' | 'instagram' | 'twitter' | 'unknown';
 
-export type ContentType = 'video' | 'reel' | 'story' | 'post' | 'short';
+export type ContentType = 'video' | 'reel' | 'story' | 'post' | 'short' | 'profile';
 
 // Download types
 export interface DownloadRequest {

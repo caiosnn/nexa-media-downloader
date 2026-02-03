@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
 import path from 'path';
+import os from 'os';
 
 const execAsync = promisify(exec);
 
 export const runtime = 'nodejs';
 
-const INSTALOADER_PATH = 'C:\\Users\\User\\AppData\\Roaming\\Python\\Python314\\Scripts\\instaloader.exe';
 const SESSION_DIR = path.join(process.cwd(), '.instagram-session');
 
 // Ensure session directory exists
@@ -39,105 +39,119 @@ export async function POST(request: NextRequest): Promise<NextResponse<LoginResp
       );
     }
 
-    // Use instaloader to login and save session
-    // The session file will be saved in the session directory
+    // Validate username format
+    if (!/^[a-zA-Z0-9._]+$/.test(username)) {
+      return NextResponse.json(
+        { success: false, error: 'Username invalido' },
+        { status: 400 }
+      );
+    }
+
     const sessionFile = path.join(SESSION_DIR, `session-${username}`);
 
-    // Create a Python script to handle login securely
+    // Write a temporary Python script (avoids shell escaping issues)
+    const tmpScript = path.join(os.tmpdir(), `ig_login_${Date.now()}.py`);
+
     const pythonScript = `
 import instaloader
+import json
 import sys
 
 L = instaloader.Instaloader(
-    dirname_pattern="${SESSION_DIR.replace(/\\/g, '\\\\')}",
-    save_metadata=False,
+    download_pictures=False,
+    download_videos=False,
+    download_video_thumbnails=False,
     download_comments=False,
     download_geotags=False,
-    download_pictures=True,
-    download_videos=True,
-    download_video_thumbnails=False,
-    compress_json=False
+    save_metadata=False,
+    compress_json=False,
+    quiet=True
 )
 
+username = ${JSON.stringify(username)}
+password = ${JSON.stringify(password)}
+session_file = ${JSON.stringify(sessionFile.replace(/\\/g, '/'))}
+
 try:
-    L.login("${username}", "${password.replace(/"/g, '\\"')}")
-    L.save_session_to_file("${sessionFile.replace(/\\/g, '\\\\')}")
-    print("LOGIN_SUCCESS")
+    L.login(username, password)
+    L.save_session_to_file(session_file)
+    print(json.dumps({"success": True}))
 except instaloader.exceptions.BadCredentialsException:
-    print("BAD_CREDENTIALS")
-    sys.exit(1)
+    print(json.dumps({"error": "bad_credentials"}))
 except instaloader.exceptions.TwoFactorAuthRequiredException:
-    print("2FA_REQUIRED")
-    sys.exit(2)
+    print(json.dumps({"error": "2fa_required"}))
 except instaloader.exceptions.ConnectionException as e:
-    print(f"CONNECTION_ERROR: {e}")
-    sys.exit(3)
+    msg = str(e)
+    if "checkpoint" in msg.lower() or "challenge" in msg.lower():
+        print(json.dumps({"error": "checkpoint"}))
+    else:
+        print(json.dumps({"error": f"connection: {msg}"}))
 except Exception as e:
-    print(f"ERROR: {e}")
-    sys.exit(4)
+    print(json.dumps({"error": str(e)}))
 `;
 
-    const command = `python -c "${pythonScript.replace(/\n/g, ';').replace(/"/g, '\\"')}"`;
+    writeFileSync(tmpScript, pythonScript, 'utf-8');
 
     try {
-      const { stdout, stderr } = await execAsync(command, {
+      const { stdout, stderr } = await execAsync(`python "${tmpScript}"`, {
         timeout: 60000,
         maxBuffer: 1024 * 1024,
       });
 
-      console.log('Login stdout:', stdout);
-      console.log('Login stderr:', stderr);
+      // Clean up temp script
+      try { unlinkSync(tmpScript); } catch {}
 
-      if (stdout.includes('LOGIN_SUCCESS')) {
+      console.log('[Instagram Login] stdout:', stdout.trim());
+      if (stderr) console.log('[Instagram Login] stderr:', stderr.substring(0, 200));
+
+      const result = JSON.parse(stdout.trim());
+
+      if (result.success) {
         return NextResponse.json({
           success: true,
           message: `Login realizado com sucesso para @${username}`,
         });
       }
 
-      if (stdout.includes('BAD_CREDENTIALS')) {
-        return NextResponse.json(
-          { success: false, error: 'Usuario ou senha incorretos' },
-          { status: 401 }
-        );
-      }
+      const errorMap: Record<string, { message: string; status: number }> = {
+        'bad_credentials': { message: 'Usuario ou senha incorretos', status: 401 },
+        '2fa_required': { message: 'Conta com autenticacao de dois fatores (2FA). Use a opcao de importar cookies.', status: 400 },
+        'checkpoint': { message: 'Instagram solicitou verificacao de seguranca. Acesse o Instagram pelo navegador, resolva a verificacao e tente novamente.', status: 400 },
+      };
 
-      if (stdout.includes('2FA_REQUIRED')) {
+      const mapped = errorMap[result.error];
+      if (mapped) {
         return NextResponse.json(
-          { success: false, error: 'Conta com autenticacao de dois fatores. Desative temporariamente ou use cookies.' },
-          { status: 400 }
+          { success: false, error: mapped.message },
+          { status: mapped.status }
         );
       }
 
       return NextResponse.json(
-        { success: false, error: 'Erro ao fazer login. Tente novamente.' },
+        { success: false, error: result.error || 'Erro ao fazer login' },
         { status: 500 }
       );
 
     } catch (execError: unknown) {
+      // Clean up temp script
+      try { unlinkSync(tmpScript); } catch {}
+
       const errorMsg = execError instanceof Error ? execError.message : '';
-      console.error('Login exec error:', errorMsg);
+      console.error('[Instagram Login] exec error:', errorMsg);
 
-      if (errorMsg.includes('BAD_CREDENTIALS') || errorMsg.includes('bad_password')) {
-        return NextResponse.json(
-          { success: false, error: 'Usuario ou senha incorretos' },
-          { status: 401 }
-        );
-      }
-
-      if (errorMsg.includes('2FA_REQUIRED') || errorMsg.includes('two_factor')) {
-        return NextResponse.json(
-          { success: false, error: 'Conta com autenticacao de dois fatores. Use a opcao de importar cookies.' },
-          { status: 400 }
-        );
-      }
-
-      if (errorMsg.includes('checkpoint') || errorMsg.includes('challenge')) {
-        return NextResponse.json(
-          { success: false, error: 'Instagram solicitou verificacao de seguranca. Acesse o Instagram pelo navegador, resolva a verificacao e tente novamente.' },
-          { status: 400 }
-        );
-      }
+      // Try to parse output from error
+      try {
+        const match = errorMsg.match(/\{.*\}/);
+        if (match) {
+          const result = JSON.parse(match[0]);
+          if (result.error === 'bad_credentials') {
+            return NextResponse.json({ success: false, error: 'Usuario ou senha incorretos' }, { status: 401 });
+          }
+          if (result.error === '2fa_required') {
+            return NextResponse.json({ success: false, error: 'Conta com 2FA. Use importar cookies.' }, { status: 400 });
+          }
+        }
+      } catch {}
 
       return NextResponse.json(
         { success: false, error: 'Erro de conexao. Verifique sua internet e tente novamente.' },
@@ -146,7 +160,7 @@ except Exception as e:
     }
 
   } catch (error) {
-    console.error('Login request error:', error);
+    console.error('[Instagram Login] request error:', error);
     return NextResponse.json(
       { success: false, error: 'Erro ao processar login' },
       { status: 500 }

@@ -1,0 +1,10 @@
+node_modules
+.next
+downloads
+.instagram-session
+cookies.txt
+settings.json
+*.md
+.git
+.env*
+nul

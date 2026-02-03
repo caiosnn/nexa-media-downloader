@@ -22,6 +22,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { toast } from 'sonner';
 import { InfluencerWithStories, Story } from '@/types';
 import { formatDistanceToNow } from '@/lib/utils';
 
@@ -40,15 +41,56 @@ export function InfluencerCard({ influencer, onRemove, disabled }: InfluencerCar
 
   const handleDownloadAll = async () => {
     setIsDownloading(true);
-    // TODO: Implement batch download
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    let downloaded = 0;
+    for (const story of influencer.stories) {
+      try {
+        const res = await fetch('/api/instagram/stories/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: influencer.username, storyId: story.id }),
+        });
+        const data = await res.json();
+        if (data.success && data.downloadUrl) {
+          const link = document.createElement('a');
+          link.href = data.downloadUrl;
+          link.download = data.fileName || 'story.mp4';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          downloaded++;
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      } catch {
+        console.error(`Failed to download story ${story.id}`);
+      }
+    }
+    toast.success(`${downloaded} stories baixados`);
     setIsDownloading(false);
   };
 
   const handleDownloadStory = async (story: Story) => {
     setDownloadingStoryId(story.id);
-    // TODO: Implement single story download
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      const res = await fetch('/api/instagram/stories/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: influencer.username, storyId: story.id }),
+      });
+      const data = await res.json();
+      if (data.success && data.downloadUrl) {
+        const link = document.createElement('a');
+        link.href = data.downloadUrl;
+        link.download = data.fileName || 'story.mp4';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        toast.success('Story baixado!');
+      } else {
+        toast.error(data.error || 'Erro ao baixar story');
+      }
+    } catch {
+      toast.error('Erro ao baixar story');
+    }
     setDownloadingStoryId(null);
   };
 
