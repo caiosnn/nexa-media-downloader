@@ -48,8 +48,8 @@ COPY . .
 # Build Next.js
 RUN npm run build
 
-# Remove dev dependencies after build
-RUN npm prune --omit=dev && npm cache clean --force
+# Clean npm cache (keeping all deps - tailwindcss needed by next.config.ts at runtime)
+RUN npm cache clean --force
 
 # Create downloads directory
 RUN mkdir -p /app/downloads
