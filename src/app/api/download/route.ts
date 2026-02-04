@@ -114,20 +114,17 @@ async function downloadWithYtDlp(url: string, outputTemplate: string, isShort: b
   // Add --no-playlist for regular video URLs to avoid downloading entire playlists
   const playlistArg = '--no-playlist';
 
-  // Format options prioritizing BEST QUALITY
-  // --format-sort: prioritize resolution, then codec quality, then bitrate
-  // bestvideo*+bestaudio/best: get best video + best audio, fallback to best combined
-  // --merge-output-format mp4: ensures merged output is MP4
-  // --recode-video mp4: converts non-MP4 to MP4 if needed
+  // Format options prioritizing BEST QUALITY with H.264 codec (compatible with all editors)
+  // --format-sort: prioritize H.264 codec (vcodec:h264), then resolution, then container
+  // This ensures compatibility with Adobe Premiere, DaVinci Resolve, etc.
+  // AV1/VP9 codecs are NOT supported by most video editors
   const formatOptions = [
-    // Best quality: best video + best audio, prefer higher resolution
-    '-f "bestvideo*+bestaudio/best" --format-sort "res:1080,ext:mp4:m4a" --merge-output-format mp4 --recode-video mp4',
-    // Fallback 1: best video + best audio without format sort
-    '-f "bv*+ba/b" --merge-output-format mp4 --recode-video mp4',
-    // Fallback 2: prefer MP4 native formats
-    '-f "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b" --merge-output-format mp4',
-    // Fallback 3: any best format with conversion
-    '-f "b" --recode-video mp4',
+    // Best quality H.264: prefer avc1 (H.264) codec, up to 1080p, with AAC audio
+    '-f "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[vcodec^=avc1]+bestaudio/best[vcodec^=avc1]/bestvideo+bestaudio/best" --format-sort "vcodec:h264,res:1080,ext:mp4:m4a" --merge-output-format mp4',
+    // Fallback 1: any format but re-encode to H.264 for compatibility
+    '-f "bv*+ba/b" --merge-output-format mp4 --postprocessor-args "ffmpeg:-c:v libx264 -preset fast -crf 23 -c:a aac"',
+    // Fallback 2: best combined format with H.264 re-encoding
+    '-f "b" --recode-video mp4 --postprocessor-args "ffmpeg:-c:v libx264 -preset fast -crf 23"',
   ];
 
   let lastError: unknown;
@@ -156,10 +153,10 @@ async function downloadInstagramWithYtDlp(url: string, outputTemplate: string): 
     cookiesArg = `--cookies "${COOKIES_FILE}"`;
   }
 
-  // Format options prioritizing BEST QUALITY for Instagram
+  // Format options prioritizing H.264 codec for Instagram (compatible with all editors)
   const formats = [
-    '-f "bestvideo*+bestaudio/best" --merge-output-format mp4 --recode-video mp4',
-    '-f "bv*+ba/b" --merge-output-format mp4 --recode-video mp4',
+    '-f "bestvideo[vcodec^=avc1]+bestaudio/best" --merge-output-format mp4',
+    '-f "bv*+ba/b" --merge-output-format mp4 --postprocessor-args "ffmpeg:-c:v libx264 -preset fast -crf 23 -c:a aac"',
     '-f "b" --merge-output-format mp4',
   ];
 
