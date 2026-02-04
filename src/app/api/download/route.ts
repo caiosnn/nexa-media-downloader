@@ -13,7 +13,7 @@ import { cacheDownloadResult, getCachedDownloadResult } from '@/lib/cache';
 const execAsync = promisify(exec);
 
 export const runtime = 'nodejs';
-export const maxDuration = 180; // 3 minutes timeout (extra time for MP4 conversion)
+export const maxDuration = 300; // 5 minutes timeout (extra time for large videos and MP4 conversion)
 
 // Directory for downloads
 const DOWNLOADS_DIR = path.join(process.cwd(), 'downloads');
@@ -94,12 +94,15 @@ function cleanOldFiles() {
 }
 
 // Common yt-dlp arguments (includes remote-components for YouTube JS challenges)
-const YT_DLP_COMMON_ARGS = `--ffmpeg-location "${FFMPEG_DIR}" --no-playlist --no-warnings --no-check-certificates --windows-filenames --remote-components ejs:github`;
+// Note: --no-playlist removed to allow downloading videos from playlists
+// We use --playlist-items 1 instead to only download the first/current video when in a playlist context
+// --js-runtimes node: uses Node.js for YouTube's JavaScript challenges (better format availability)
+const YT_DLP_COMMON_ARGS = `--ffmpeg-location "${FFMPEG_DIR}" --no-warnings --no-check-certificates --windows-filenames --js-runtimes node --remote-components ejs:github`;
 
 // Download using yt-dlp (YouTube, Twitter/X) with format fallback
-// Always outputs MP4, converting if necessary
-async function downloadWithYtDlp(url: string, outputTemplate: string): Promise<{ stdout: string; stderr: string }> {
-  // Use cookies file if available (helps bypass YouTube bot detection)
+// Always outputs MP4 at the BEST available quality
+async function downloadWithYtDlp(url: string, outputTemplate: string, isShort: boolean = false): Promise<{ stdout: string; stderr: string }> {
+  // Use cookies file if available (helps bypass YouTube bot detection and unlock higher quality)
   let cookiesArg = '';
   if (existsSync(COOKIES_FILE)) {
     cookiesArg = `--cookies "${COOKIES_FILE}"`;
@@ -108,23 +111,33 @@ async function downloadWithYtDlp(url: string, outputTemplate: string): Promise<{
   // Force MP4 output template (replace extension placeholder with mp4)
   const mp4Template = outputTemplate.replace('%(ext)s', 'mp4');
 
-  // Format options - all force MP4 output with conversion if needed
-  // --recode-video mp4: converts to MP4 if source is different format (webm, mkv, etc)
+  // Add --no-playlist for regular video URLs to avoid downloading entire playlists
+  const playlistArg = '--no-playlist';
+
+  // Format options prioritizing BEST QUALITY
+  // --format-sort: prioritize resolution, then codec quality, then bitrate
+  // bestvideo*+bestaudio/best: get best video + best audio, fallback to best combined
   // --merge-output-format mp4: ensures merged output is MP4
+  // --recode-video mp4: converts non-MP4 to MP4 if needed
   const formatOptions = [
-    '-f "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b" --merge-output-format mp4',
+    // Best quality: best video + best audio, prefer higher resolution
+    '-f "bestvideo*+bestaudio/best" --format-sort "res:1080,ext:mp4:m4a" --merge-output-format mp4 --recode-video mp4',
+    // Fallback 1: best video + best audio without format sort
     '-f "bv*+ba/b" --merge-output-format mp4 --recode-video mp4',
+    // Fallback 2: prefer MP4 native formats
+    '-f "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b" --merge-output-format mp4',
+    // Fallback 3: any best format with conversion
     '-f "b" --recode-video mp4',
   ];
 
   let lastError: unknown;
   for (const fmt of formatOptions) {
-    const command = `"${YT_DLP_PATH}" ${YT_DLP_COMMON_ARGS} ${cookiesArg} ${fmt} -o "${mp4Template}" "${url}"`.replace(/\s+/g, ' ').trim();
+    const command = `"${YT_DLP_PATH}" ${YT_DLP_COMMON_ARGS} ${playlistArg} ${cookiesArg} ${fmt} -o "${mp4Template}" "${url}"`.replace(/\s+/g, ' ').trim();
     console.log('Executing yt-dlp:', command);
     try {
       return await execAsync(command, {
-        timeout: 180000, // 3 minutes for conversion
-        maxBuffer: 10 * 1024 * 1024,
+        timeout: 300000, // 5 minutes for large videos and conversion
+        maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large outputs
       });
     } catch (error) {
       lastError = error;
@@ -134,7 +147,7 @@ async function downloadWithYtDlp(url: string, outputTemplate: string): Promise<{
   throw lastError;
 }
 
-// Download Instagram content using yt-dlp with cookies
+// Download Instagram content using yt-dlp with cookies (BEST QUALITY)
 async function downloadInstagramWithYtDlp(url: string, outputTemplate: string): Promise<{ stdout: string; stderr: string }> {
   let cookiesArg = '';
 
@@ -143,16 +156,21 @@ async function downloadInstagramWithYtDlp(url: string, outputTemplate: string): 
     cookiesArg = `--cookies "${COOKIES_FILE}"`;
   }
 
-  const formats = ['-f "bv*+ba/b" --merge-output-format mp4', '-f "b" --merge-output-format mp4'];
+  // Format options prioritizing BEST QUALITY for Instagram
+  const formats = [
+    '-f "bestvideo*+bestaudio/best" --merge-output-format mp4 --recode-video mp4',
+    '-f "bv*+ba/b" --merge-output-format mp4 --recode-video mp4',
+    '-f "b" --merge-output-format mp4',
+  ];
 
   let lastError: unknown;
   for (const fmt of formats) {
-    const command = `"${YT_DLP_PATH}" ${YT_DLP_COMMON_ARGS} ${cookiesArg} ${fmt} -o "${outputTemplate}" "${url}"`;
+    const command = `"${YT_DLP_PATH}" ${YT_DLP_COMMON_ARGS} --no-playlist ${cookiesArg} ${fmt} -o "${outputTemplate}" "${url}"`;
     console.log('Executing yt-dlp for Instagram:', command);
     try {
       return await execAsync(command, {
-        timeout: 110000,
-        maxBuffer: 10 * 1024 * 1024,
+        timeout: 180000, // 3 minutes for larger Instagram videos
+        maxBuffer: 50 * 1024 * 1024,
       });
     } catch (error) {
       lastError = error;
@@ -572,9 +590,30 @@ export async function POST(request: NextRequest): Promise<NextResponse<DownloadR
         }
       } else {
         // YouTube or Twitter/X
-        await downloadWithYtDlp(url, outputTemplate);
-        const files = readdirSync(DOWNLOADS_DIR);
-        downloadedFile = files.find(f => f.startsWith(`${timestamp}_`));
+        const isYouTubeShort = detection.platform === 'youtube' && detection.contentType === 'short';
+
+        try {
+          await downloadWithYtDlp(url, outputTemplate, isYouTubeShort);
+          const files = readdirSync(DOWNLOADS_DIR);
+          downloadedFile = files.find(f => f.startsWith(`${timestamp}_`));
+        } catch (firstError) {
+          // For YouTube Shorts, try converting URL to watch format as fallback
+          if (isYouTubeShort) {
+            console.log('[Download] Short URL failed, trying watch format...');
+            const shortIdMatch = url.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/);
+            if (shortIdMatch) {
+              const watchUrl = `https://www.youtube.com/watch?v=${shortIdMatch[1]}`;
+              console.log('[Download] Retrying with watch URL:', watchUrl);
+              await downloadWithYtDlp(watchUrl, outputTemplate, true);
+              const files = readdirSync(DOWNLOADS_DIR);
+              downloadedFile = files.find(f => f.startsWith(`${timestamp}_`));
+            } else {
+              throw firstError;
+            }
+          } else {
+            throw firstError;
+          }
+        }
       }
 
       if (!downloadedFile) {
@@ -627,6 +666,15 @@ export async function POST(request: NextRequest): Promise<NextResponse<DownloadR
       } else if (errorMessage.includes('rate limit')) {
         userError = 'Limite de requisicoes do Instagram atingido. Aguarde alguns minutos e tente novamente.';
         statusCode = 429;
+      } else if (errorMessage.includes('Sign in to confirm') || errorMessage.includes('bot')) {
+        userError = 'YouTube esta solicitando verificacao. Tente novamente em alguns minutos ou adicione cookies.';
+        statusCode = 429;
+      } else if (errorMessage.includes('Video unavailable') || errorMessage.includes('removed')) {
+        userError = 'Este video foi removido ou esta indisponivel.';
+        statusCode = 400;
+      } else if (errorMessage.includes('age') || errorMessage.includes('Age')) {
+        userError = 'Este video requer verificacao de idade. Adicione cookies do YouTube para baixar.';
+        statusCode = 401;
       }
 
       return NextResponse.json(
