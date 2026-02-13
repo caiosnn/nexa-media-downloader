@@ -25,8 +25,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp and instaloader
-RUN python3 -m pip install --break-system-packages yt-dlp instaloader
+# Install yt-dlp and instaloader (no-cache-dir ensures fresh download on rebuild)
+ARG PIP_CACHEBUST=1
+RUN python3 -m pip install --break-system-packages --no-cache-dir yt-dlp instaloader
 
 # Install Deno for yt-dlp JS challenges
 RUN curl -fsSL https://deno.land/install.sh | sh
